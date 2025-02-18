@@ -1,0 +1,941 @@
+---
+title: "TESIS - FINAL"
+author: "Gabriela García"
+date: "2025-02-12"
+output: html_document
+---
+
+# TESIS
+
+## LIBRERÍAS:
+
+```{r}
+install_package <- function(packages) {
+  for (package in packages) {
+    if (!require(package, character.only = TRUE)) {
+      message(paste("Instalando paquete:", package))
+      
+      # Verificar si es un paquete de Bioconductor
+      if (package %in% c("mixOmics")) { 
+        if (!requireNamespace("BiocManager", quietly = TRUE)) {
+          install.packages("BiocManager")  # Instala BiocManager si no está instalado
+        }
+        BiocManager::install(package)  # Instala el paquete de Bioconductor
+      } else {
+        install.packages(package, dependencies = TRUE)  # Instala paquetes de CRAN
+      }
+      
+      library(package, character.only = TRUE)  # Cargar el paquete después de instalarlo
+    } else {
+      message(paste("El paquete", package, "ya está instalado y cargado."))
+    }
+  }
+}
+
+
+install_package(c("ggplot2", "tidyr", "dplyr", "factoextra","ir", 
+                       "signal", "baseline", "tibble", "rsm", "plotly", 
+                       "BiocManager", "mixOmics"))
+
+
+```
+
+## FUNCIONES:
+
+### ACIDO ACETICO:
+
+Reescribir los archivos
+
+```{r}
+archivos <- list.files("./ESTÁNDARES/ACIDO/",pattern = "\\.CSV$", full.names = T)
+milista <-  lapply(archivos, function(x)
+  read.csv(x, sep = ";", header = F))
+archivos_names <- list.files("./ESTÁNDARES/ACIDO/")
+for (l in seq_along(milista)) {
+  write.csv(milista[[l]],
+            file = file.path("./standar/AC/", paste0(archivos_names[l], ".csv")),
+            row.names = F)
+}
+
+```
+
+### ETANOL:
+
+Reescribir los archivos
+
+```{r}
+archivos2 <- list.files("./ESTÁNDARES/ETANOL/",pattern = "\\.CSV$", full.names = T)
+milista2 <-  lapply(archivos2, function(x)
+  read.csv(x, sep = ";", header = F))
+archivos_names2 <- list.files("./ESTÁNDARES/ETANOL/")
+for (l in seq_along(milista2)) {
+  write.csv(milista2[[l]],
+            file = file.path("./standar/ET/", paste0(archivos_names2[l], ".csv")),
+            row.names = F)
+}
+```
+
+### MUESTRAS CONTAMINADAS:
+
+Reescribir los archivos
+
+```{r}
+archivos3 <- list.files("./MUESTRAS/",pattern = "\\.CSV$", full.names = T)
+milista3 <-  lapply(archivos3, function(x)
+  read.csv(x, sep = ";", header = F))
+archivos_names3 <- list.files("./MUESTRAS/")
+for (l in seq_along(milista3)) {
+  write.csv(milista3[[l]],
+            file = file.path("./samples/", paste0(archivos_names3[l], ".csv")),
+            row.names = F)
+}
+```
+
+### MUESTRAS DE VINAGRE:
+
+```{r}
+  archivos4 <- list.files("./MUESTRAS VINAGRE/1/",pattern = "\\.CSV$", full.names = T)
+  milista4 <-  lapply(archivos4, function(x)
+    read.csv(x, sep = ";", header = F))
+  archivos_names4 <- list.files("./MUESTRAS VINAGRE/1/")
+  for (l in seq_along(milista4)) {
+    write.csv(milista4[[l]],
+              file = file.path("./MUESTRAS VINAGRE/", paste0(archivos_names4[l], ".csv")),
+              row.names = F)
+  }
+```
+
+### OTROS:
+
+#### Formato ir a spectra:
+
+```{r}
+to_spectra <- function(X){
+  spectra <- as.data.frame((ir_flatten(X)))
+  wn <- spectra[, 1]
+  spectra <- spectra[, -1]
+  rownames(spectra) <- wn
+  colnames(spectra) <- X$sample_id
+  spectra.t <- t(spectra)
+}
+
+fun_to_spectra <- function(X){
+  spectra <- as.data.frame((ir_flatten(X)))
+  wn <- spectra[, 1]
+  spectra <- spectra[, -1]
+  rownames(spectra) <- wn
+  colnames(spectra) <- X$sample_id
+  spectra.t <- t(spectra)
+  return(spectra.t)
+}
+
+```
+
+#### spectra a ir:
+
+```{r}
+fun_to_ir <- function(s, X) {
+  l <- nrow(s)
+  wn <- colnames(s)
+  for (i in 1:l) {
+    s_i <- as.numeric(s[i, ])
+    df_i <- data.frame(x = rev(wn), y = rev(s_i))
+    df_i <- as.data.frame(lapply(df_i,as.numeric))
+    X$spectra[[i]] <- df_i
+  }
+  return(X)
+}
+```
+
+#### Primera Derivada:
+
+```{r}
+PRIMERADERIVADA<-function(X){X %>%  
+    ir_bc(method = "rubberband") %>%
+    ir_normalise()  %>%
+    ir_smooth(method = "sg", p = 3, n = 91, m = 0)%>%   
+    ir_smooth(method = "sg", p = 3, n = 9, m = 1) }
+```
+
+#### Segunda Derivada:
+
+```{r}
+ SEGUNDADERIVADA_ir<-function(X,p){
+    r<-fun_to_spectra(X)
+    w<-as.data.frame(r)
+    m<-as.matrix(w)
+    baseline <- baseline(m, method = "als")
+    baseline <- baseline@corrected
+    baseline[baseline<0]<-0
+    cont <- ir::ir_import_csv(p)
+    contaminado_ir<-fun_to_ir(baseline,cont)
+    suavizado_ir<-contaminado_ir%>%ir_smooth(method = "sg", p = 3, n = 91, m = 0)
+    suavizado_ir.matriz<-fun_to_spectra(suavizado_ir)
+    normalized_spectra <- t(apply(suavizado_ir.matriz, 1, function(row) row / sum(row)))
+    datos_bc.filtered.normalized <- fun_to_ir(s = normalized_spectra,X = cont)
+    datos_bc.spectra.filtered <-  as.data.frame(t(apply(normalized_spectra,1,function(x) sgolayfilt(x, p = 2, n = 7, m = 2))))
+    colnames(datos_bc.spectra.filtered) <- colnames(suavizado_ir.matriz)
+    datos_ir<-fun_to_ir(datos_bc.spectra.filtered,cont)
+    return(datos_bc.spectra.filtered)
+  }
+```
+
+#### PLSDA:
+
+```{r}
+gaby_function_PLSDA <- function(X, Y, max_, step_) {
+ 
+  srbct.splsda <- splsda(X, Y, ncomp = 10)  # Establecer ncomp en 10 para evaluar el rendimiento más adelante
+  
+   # someter a una evaluación de rendimiento para ajustar la cantidad de componentes a utilizar
+  perf.splsda.srbct <- perf(
+    srbct.splsda,
+    validation = "Mfold",
+    folds = 5,
+    nrepeat = 10,
+    # use repeated cross-validation
+    progressBar = FALSE,
+    auc = TRUE)
+
+  # Grafico del resultado de la evaluación del desempeño en los diez componentes
+  
+  plot(perf.splsda.srbct)
+  
+ 
+  perf.splsda.srbct$choice.ncomp 
+  
+  
+  # someter al proceso de ajuste para determinar el número óptimo de variables
+  tune.splsda.srbct <- tune.splsda(
+    X,
+    Y,
+    ncomp = 4,
+    # calcular los primeros 4 componentes
+    validation = 'Mfold',
+    folds = 5,
+    nrepeat = 10,
+    # utilizar validación cruzada repetida
+    dist = 'max.dist',
+    # use max.dist measure
+    measure = "BER",
+    # utiliza una tasa de error equilibrada de la medida de distribución
+    test.keepX = seq(1, max_, step_),
+    cpus = 2)
+  # permitir la paralelización para disminuir el tiempo de ejecución
+  
+  optimal.ncomp <- tune.splsda.srbct$choice.ncomp$ncomp
+  optimal.keepX <- tune.splsda.srbct$choice.keepX[1:optimal.ncomp]
+  
+# Formar el modelo final con valores optimizados para el componente y el número de variables
+  final.splsda <- splsda(X, Y, ncomp = optimal.ncomp, keepX = optimal.keepX)
+  return(final.splsda)
+}
+```
+
+#### PLS:
+
+```{r}
+gaby_function_PLS <- function(X, Y, min_, max_, step_) {
+  
+  spls.liver <- spls(
+    X = X,
+    Y = Y,
+    ncomp = 10,
+    mode = 'regression'
+  )
+  
+    tune.spls.liver <- tune.spls(
+    X,
+    Y,
+    ncomp = 2 ,
+    test.keepX = seq(min_, max_, step_),
+    test.keepY = 1:2,
+    nrepeat = 1,
+    folds = 10,
+    # use 10 folds
+    mode = 'regression',
+    measure = 'cor'
+  )
+  
+  optimal.keepX <- tune.spls.liver$choice.keepX
+  
+  # extraer el número optimo de variables por Y datafram
+  optimal.keepY <- tune.spls.liver$choice.keepY
+  
+  optimal.ncomp <-  length(optimal.keepX) # extraer el número óptimo de componentes
+  
+  
+  #Formar el modelo final con valores optimizados para el componente y el número de variables
+  final.spls.liver <- spls(
+    X,
+    Y,
+    ncomp = 2,
+    keepX = optimal.keepX,
+    keepY = optimal.keepY,
+    mode = "regression"
+  ) # Se utiliza un enfoque explicativo,
+  # use el modelo de regresión
+  
+  # Evalar la precisión de la predicción para los dos primeros componentes
+  
+  return(
+    list(
+      modelo = final.spls.liver,
+      comp = optimal.ncomp,
+      optimal.keepX = optimal.keepX,
+      optimal.keepY = optimal.keepY
+    )
+  )
+  
+}
+```
+
+#### Calcular el SME:
+
+```{r}
+
+funrmse <- function(pred, actual) {
+  n <- length(pred)
+  rmse <- sqrt(sum((pred - actual)^2) / n)
+  
+  
+  return(rmse)
+}
+```
+
+#### Extraer el mejor modelo:
+
+```{r}
+fun_extract_bst_model <- function(X,test_data,test_ti){
+  
+  prediccion.final <-  predict(X, newdata = test_data)
+  
+  Comp1 <- prediccion.final$predict[, 1:2, 1]
+  Comp2 <- prediccion.final$predict[, 1:2, 2]
+  
+  et <- Comp1[, 2]
+  ac <- Comp1[, 1]
+  et2 <- Comp2[, 2]
+  ac2 <- Comp2[, 1]
+  
+  SME_comp1_et <- funrmse(et, test_ti[, 2])
+
+  SME_comp1_ac <- funrmse(ac, test_ti[, 1])
+  
+  
+  SME_comp2_et <- funrmse(et2, test_ti[, 2])
+  
+  
+  SME_comp2_ac <- funrmse(ac2, test_ti[, 1])
+  
+  
+  
+  vector_respuesta <- c(et_1 = SME_comp1_et,
+                        et_2 = SME_comp2_et,
+                        ac_1 = SME_comp1_ac,
+                        ac_2 = SME_comp2_ac)
+  
+  return(vector_respuesta)
+  
+  }
+```
+
+## DISEÑO DEL EXPERIMENTO
+
+**Definir los rangos de las restricciones:**
+
+```{r}
+lc <- c(5, 0.5)   # Límites inferiores: ácido acético y etanol
+uc <- c(6, 1)     # Límites superiores: ácido acético y etanol
+```
+
+**Generar combinaciones de mezclas bajo las restricciones:**
+
+```{r}
+design <- expand.grid(
+  AcAcetico = seq(lc[1], uc[1], length.out = 5), # 5 puntos entre 5 y 6
+  Etanol = seq(lc[2], uc[2], length.out = 5)     # 5 puntos entre 0.5 y 1
+)
+
+design$Agua <- 1 - (design$AcAcetico / 100) - (design$Etanol / 100)
+```
+
+**Agregar código a cada mezcla:**
+
+```{r}
+design$Codigo <- paste0("M", seq(1, nrow(design)))
+print(design)
+```
+
+### **Gráficos:**
+
+**Gráfico de dispersión:**
+
+```{r}
+ggplot(design, aes(x = AcAcetico, y = Etanol, color = Agua)) +
+  geom_point(size = 4) +  # Puntos más grandes
+  scale_color_gradient(low = "blue", high = "cyan") +  # Gradiente de color según el agua
+  labs(title = "Combinaciones de Ácido Acético y Etanol",
+       x = "Ácido Acético (%)",
+       y = "Etanol (%)",
+       color = "Agua (mL)") +
+  theme_minimal()
+```
+
+**Gráfico de Superficie 3D (interactivo):**
+
+```{r}
+# Crear una nueva columna de etiquetas con el código y las concentraciones
+design$Etiqueta <- paste0(design$Codigo, 
+                          "<br>Ácido Acético: ", design$AcAcetico, " %",
+                          "<br>Etanol: ", design$Etanol, " %",
+                          "<br>Agua: ", round(design$Agua, 4), " mL")  # Redondeo para mejor visualización
+
+# Crear gráfico interactivo en 3D con etiquetas detalladas
+plot_ly(design, 
+        x = ~AcAcetico, 
+        y = ~Etanol, 
+        z = ~Agua, 
+        type = "scatter3d", 
+        mode = "markers",
+        marker = list(size = 5, color = ~Agua, colorscale = "Viridis"),
+        text = ~Etiqueta,   # Agrega la información detallada como etiqueta
+        hoverinfo = "text") %>%  # Muestra la etiqueta personalizada al pasar el cursor
+  layout(title = "Distribución de las Combinaciones en 3D",
+         scene = list(xaxis = list(title = "Ácido Acético (%)"),
+                      yaxis = list(title = "Etanol (%)"),
+                      zaxis = list(title = "Agua (mL)")))
+
+```
+
+## IMPORTACIÓN DE DATOS:
+
+### ÁCIDO ACÉTICO:
+
+```{r}
+ACIDO <- list.files("./standar/AC/",full.names = T)
+DATAAC<-lapply(ACIDO,function(x) ir_import_csv(x,sample_id = "from_filenames"))
+DATAAC1<- bind_rows(DATAAC)
+```
+
+**Preprocesado:**
+
+```{r}
+data_ac<-PRIMERADERIVADA(DATAAC1)
+datos_ir_ac<-SEGUNDADERIVADA_ir(data_ac,ACIDO)
+
+acetico<-to_spectra(data_ac)
+acetico_df<-as.data.frame(acetico)#Tabla con los datos de la 1era derivada
+
+acetico_df2<-as.data.frame(datos_ir_ac)#Tabla con los datos de la 2da derivada
+```
+
+### ETANOL:
+
+```{r}
+ETANOL<-list.files("./standar/ET/",full.names = T)
+DATAET<-lapply(ETANOL,function(x) ir_import_csv(x,sample_id = "from_filenames"))
+DATAET1<- bind_rows(DATAET)
+```
+
+**Preprocesado:**
+
+```{r}
+data_et<-PRIMERADERIVADA(DATAET1)
+datos_ir_et<-SEGUNDADERIVADA_ir(data_et,ETANOL)
+
+etanol<-to_spectra(data_et)
+etanol_df<-as.data.frame(etanol)#Tabla con los datos de la 1era derivada
+
+etanol_df2<-as.data.frame(datos_ir_et)#Tabla con los datos de la 2da derivada
+```
+
+### MUESTRAS CONTAMINADAS
+
+```{r}
+MUESTRAS <- list.files("./samples/",full.names = T)
+DATAMUESTRAS<-lapply(MUESTRAS,function(x) ir_import_csv(x,sample_id = "from_filenames"))
+DATAMUESTRAS1<- bind_rows(DATAMUESTRAS)
+```
+
+**Preprocesado:**
+
+```{r}
+sample<- PRIMERADERIVADA(DATAMUESTRAS1)
+datos_ir<-SEGUNDADERIVADA_ir(sample,MUESTRAS)
+
+contaminado<-to_spectra(sample) 
+contaminado_df<-as.data.frame(contaminado) #Tabla con los datos de la 1era derivada
+
+contaminado_df2da<-as.data.frame(datos_ir) #Tabla con los datos de la 2da derivada
+```
+
+### MUESTRAS DE VINAGRE:
+
+```{r}
+madre<-ir_import_csv("./MUESTRAS VINAGRE/2/madre.CSV.csv",sep=",")
+comercial<-ir_import_csv("./MUESTRAS VINAGRE/2/comercial.CSV.csv",sep=",")  
+VINAGRE <- list.files("./MUESTRAS VINAGRE/2/",full.names = T)
+MUESTRASVINAGRE<-bind_rows(madre,comercial)
+```
+
+**Preprocesado:**
+
+```{r}
+MUESTRASVINAGRE1<-PRIMERADERIVADA(MUESTRASVINAGRE)
+MUESTRASVINAGRE2<-SEGUNDADERIVADA_ir(MUESTRASVINAGRE1,VINAGRE)
+```
+
+## PCA:
+
+### 1era derivada - Estándares
+
+**Datos:**
+
+```{r}
+limpio<-bind_rows(etanol_df,acetico_df)
+condicion<-as.factor(c(rep("etanol",15),rep("acetico",15)))
+
+pcx<-prcomp(limpio)
+score<-as.data.frame(cbind(pcx$x,condicion = condicion))
+score$condicion <- as.factor(condicion)
+```
+
+**Gráfico:**
+
+```{r}
+ggplot(score, aes(x = PC1, y = PC2,color=condicion)) +geom_point() +
+  theme_minimal() +
+  labs(title = "PCA de los espectros del ácido acético",
+       x = "Componente Principal 1",
+       y = "Componente Principal 2")
+```
+
+### 2da derivada - Estándares:
+
+```{r}
+limpio2<-bind_rows(etanol_df2,acetico_df2)
+condicion2<-as.factor(c(rep("etanol",15),rep("acetico",15)))
+
+pcx2<-prcomp(limpio2)
+score2<-as.data.frame(cbind(pcx2$x,condicion = condicion2))
+score2$condicion2 <- as.factor(condicion2)
+summary(pcx2)
+```
+
+**Gráfico:**
+
+```{r}
+ggplot(score2, aes(x = PC1, y = PC2,color=condicion2)) +geom_point() +
+  theme_minimal() +
+  labs(title = "PCA de los espectros de los estándares (muestras limpias)",
+       x = "PC1 80.36% ",
+       y = "PC2 11.06%")
+```
+
+## GRÁFICOS EXTRAS - DERIVADOS DEL PCA:
+
+### CONTRIBUCIÓN:
+
+#### ESTÁNDARES - 1era Derivada:
+
+```{r}
+P1<-fviz_contrib(pcx,"var")
+P1
+selec <- P1$data[abs(P1$data$contrib) >0.01,]
+onda<-selec$name
+```
+
+**Filtro:**
+
+```{r}
+xs<-contaminado_df[ ,onda]
+```
+
+#### ESTÁNDARES- 2da Derivada :
+
+```{r}
+P2<-fviz_contrib(pcx2,"var")
+P2
+selec2 <- P2$data[abs(P2$data$contrib) >0.01,]
+onda2<-selec2$name
+```
+
+**Filtro:**
+
+```{r}
+xs2<-contaminado_df2da[,onda2]
+```
+
+### GRÁFICO DE SEDIMENTACIÓN:
+
+#### 1era Derivada:
+
+```{r}
+P1.1<-fviz_screeplot(pcx)
+P1.1
+```
+
+#### 2da Derivada:
+
+```{r}
+P2.2<-fviz_screeplot(pcx2)
+P2.2
+```
+
+## DIVISIÓN EN TRAINING Y TEST:
+
+### ESTÁNDARES:
+
+Se realizaron diversas combinaciones para el PLSDA Y PLS, los que se mostrarán a continuación, son las combinaciones con menor taza de error calculado.
+
+**COMB**: **Datos sin Filtrar + 2da Derivada + Sin Escalar.**
+
+```{r}
+Xpda<-as.data.frame(limpio2) #Datos con la 2da Derivada
+Ypda <- condicion2
+idxpda <- sample(1:nrow(Xpda), nrow(Xpda) * 0.7) #Escoge el 70% de los datos
+length(idxpda)
+train.Xpda <- Xpda[idxpda, ]
+train.Ypda <- Ypda[idxpda]
+test.Xplsda <- Xpda[-idxpda, ]
+test.Yplsda<- Ypda[-idxpda]
+```
+
+### MUESTRAS CONTAMINADAS:
+
+**COMB: Datos sin Filtrar + 2da Derivada + Sin Escalar.**
+
+```{r}
+muestracruda<-datos_ir
+muestracruda$Codigo  <- rownames(muestracruda)
+
+#Leemos el excel para extraer los códigos tomando en cuenta las réplicas.
+X <- read.csv("./volumenes_eppendorf.csv",sep=";") 
+# leemos y eliminamos la primera columna q la anade el R
+muestras <- apply(X[,1:2],1,function(x) paste0(paste0(x,collapse = "."),collapse = ".CSV"))
+muestras <- paste0(muestras,".CSV")
+
+head(X)
+X$Codigo <- muestras
+Y<- X[,-2]
+
+dats2.sin <- inner_join(Y,muestracruda,by="Codigo")
+rownames(dats2.sin)<-dats2.sin$Codigo
+dats_2.sin<-dats2.sin[,-1]
+idx2.sin <- sample(1:nrow(dats_2.sin), nrow(dats_2.sin) * 0.6)
+
+X_2.sin<-dats_2.sin[,3:ncol(dats_2.sin)]
+Y_2.sin<-dats_2.sin[,1:2]
+train.X2.sin<-X_2.sin[idx2.sin,]
+train.Y2.sin<-Y_2.sin[idx2.sin,]
+test.X2.sin<-X_2.sin[-idx2.sin,]
+test.Y2.sin<-Y_2.sin[-idx2.sin,]
+n1.sin<-nrow(test.X2.sin)
+```
+
+## PLSDA:
+
+### ESTÁNDARES:
+
+```{r}
+modelo_plsda <- gaby_function_PLSDA(train.Xpda,train.Ypda,max_ =7469,step_ = 1000 ) #max_ contiene el número de datos con los que trabajo 
+
+```
+
+**PLSDA entrenado:**
+
+```{r}
+modelo_train_plsda <- splsda(X = train.Xpda, Y = train.Ypda, ncomp = modelo_plsda$ncomp, keepX = modelo_plsda$optimal.keepX)
+
+```
+
+**Predicciones:**
+
+```{r}
+predict.splsda.srbct <- predict(modelo_train_plsda, test.Xplsda, dist = "mahalanobis.dist")
+predict.comp1 <- predict.splsda.srbct$class$mahalanobis.dist[,1]
+predict.comp1.fact<-as.factor(predict.comp1)
+table(factor(predict.comp1.fact, levels = levels(Ypda)), test.Yplsda)
+```
+
+### **GRÁFICO**:
+
+**Curva de ROC:**
+
+```{r}
+auc.splsda = auroc(modelo_train_plsda, roc.comp = 1, print = FALSE)
+#ROC 100% - debido a que el diseño experimental de los analitos están por separado, ya que estamos trabajando con muestras limpias.
+
+```
+
+## PLS:
+
+Para el modelamiento, se escogió la mejor combinación, la misma con la que se trabajó el PLSDA, se podrá visualizar el training y test de los datos en su respectiva sección. ***"COMB: Datos sin Filtrar + 2da Derivada + Sin Escalar.".***
+
+Sin embargo, para una mejor precisión de los datos, se debía escoger bien los rangos para la exactitud del modelo, por lo que se recurrió al siguiente comando, la cual será representado como comentario debido a su duración mayor de 24h para su total ejecución; con el resultado que arroja, se lo ocupó para reproducir mi PLS y su predicción respectiva.
+
+```{r}
+minimo <- seq(1000, 2000, 100)
+maximo <- seq(3000, 4000, 100)
+
+lista <- list()
+lista.nombres <- list()
+i <- 1
+for (m in seq_along(minimo)) {
+  for (ma in seq_along(maximo)) {
+    lista.nombres[[i]] <- paste(minimo[m], maximo[ma], sep = "_")
+    lista[[i]] <- gaby_function_PLS(
+      train.X2.sin,
+      train.Y2.sin,
+      min_ = minimo[m],
+      max_ = maximo[ma],
+      step_ = 50
+    )
+    i <- i * 1
+
+  }
+
+}
+
+names(lista) <- unlist(lista.nombres)
+
+lista.modelos <- lapply(lista, function(x) x$modelo)
+names(lista.modelos) <- unlist(lista.modelos)
+```
+
+Una vez mi comando haya arrojado una respuesta, extraigo de mi lista generada, el mejor modelo
+
+```{r}
+respuesta_final_tesis <- lapply(modelos.lista,function(x) fun_extract_bst_model(x,test_data =test.X2.sin,test_ti = test.Y2.sin))
+respuesta_final_tesis <- as.data.frame(Reduce("rbind",respuesta_final_tesis))
+colnames(respuesta_final_tesis) <- unlist(lista.nombres)
+rownames(respuesta_final_tesis) <- c("et1","et2","ac1","ac2") # colocar el nombre a las filas 
+  
+#pasar la mejor comb. pls
+modelo_pls_final <- lista$`2000_4000`$modelo
+```
+
+RENDIMIENTO DEL MODELO:
+
+```{r}
+respuesta_final_tesis<-fun_extract_bst_model(modelo_pls_final,test_data =test.X2.sin,test_ti = test.Y2.sin)
+
+respuesta_final_tesis <- as.data.frame(Reduce("rbind",respuesta_final_tesis))
+colnames(respuesta_final_tesis) <- c("2000_4000")
+rownames(respuesta_final_tesis) <- c("et1","et2","ac1","ac2")
+respuesta_final_tesis
+```
+
+## FINAL:
+
+**COMPROBAR MI MODELO CON MIS MUESTRAS DE VINAGRE**
+
+```{r}
+prediccion.comp <-  predict(modelo_pls_final, newdata = MUESTRASVINAGRE2)
+
+
+
+Comp1 <- prediccion.comp$predict[, 1:2, 1]
+Comp2 <- prediccion.comp$predict[, 1:2, 2] #El segundo Comp. analiza mejor el etanol
+
+et <- Comp1[, 2]
+ac <- Comp1[, 1]
+et2 <- Comp2[, 2]
+ac2 <- Comp2[, 1]
+
+RESULTADOSFINALES<-data.frame(et,ac,et2,ac2)
+RESULTADOSFINALES 
+
+
+
+```
+
+La etiqueta de "madre" se le denominó a la muestra de vinagre de manzana realizado artesanalmente. Como se logra observar en la tabla, **ambas muestras se encuentran dentro de los parámetros** según el CODEX.
+
+## OTROS ANALISIS:
+
+### ESTÁNDARES - PLSDA
+
+```{r}
+PLSDA<-splsda(X=train.Xpda, Y=train.Ypda, ncomp = 2)
+
+```
+
+### GRÁFICOS:
+
+#### GRAFICO PLSDA:
+
+```{r}
+GRAFICOPLSDA<-plotIndiv(PLSDA, 
+                        group = train.Ypda, 
+                        legend = TRUE,
+                        title = "PLS-DA: Análisis de los Estándares",
+                        ellipse = TRUE)
+```
+
+#### GRÁFICO DE CONTRIBUCIÓN:
+
+```{r}
+GRAFICOPLSDA2<- plotLoadings(PLSDA,contrib = "max",method = "median")
+GRAFICOPLSDA2
+```
+
+#### DIVISIÓN DE COMP.:
+
+```{r}
+
+COMP1AC<-GRAFICOPLSDA2$X[GRAFICOPLSDA2$X$Contrib.acetico==T,]
+COMP1AC<-COMP1AC[abs(COMP1AC$importance)>0.01,]
+
+COMP1ET<-GRAFICOPLSDA2$X[GRAFICOPLSDA2$X$Contrib.etanol==T,]
+COMP1ET<-COMP1ET[abs(COMP1ET$importance)>0.01,]
+```
+
+### MUESTRA CONTAMINADA
+
+#### GRÁFICO DE CONTRIBUCIÓN:
+
+```{r}
+grafico<-plotLoadings(modelo_pls_final$modelo,contrib = "max",method = "median") 
+grafico 
+```
+
+#### DIVISIÓN DE COMP.:
+
+```{r}
+importantesX<-grafico$X[abs(grafico$X)>0.015,]  
+Cargas<-modelo_pls_final$modelo$loadings$X[,2] 
+Cargasac<-modelo_pls_final$modelo$loadings$X[,1] 
+summary(Cargas) 
+hist(Cargas)
+# Compute the 95% confidence interval using quantiles
+ci <- quantile(Cargas, probs = c(0.025, 0.975))
+ciac<- quantile(Cargasac,probs = c(0.025, 0.975))
+competanol<-rownames(modelo_pls_final$modelo$loadings$X)[abs(modelo_pls_final$modelo$loadings$X[,2])>0.02]
+compacetico<-rownames(modelo_pls_final$modelo$loadings$X)[abs(modelo_pls_final$modelo$loadings$X[,1])>0.02]
+```
+
+### TABLA DE COMPONENTES:
+
+#### TABLA DE COMP. ESTÁNDARES:
+
+```{r}
+tabladecomp.limpia<-data_frame(numero=c(rownames(COMP1AC),rownames(COMP1ET)),analito=as.factor(c(rep("AC",length(rownames(COMP1AC))),rep("ET",length(rownames(COMP1ET))))))
+tabladecomp.limpia
+```
+
+#### TABLA DE COMP. MUESTRAS CONTAMINADAS:
+
+```{r}
+tabladecomp.contaminado <- tibble(numero = c(compacetico, competanol), analito = as.factor(c(rep("AC", length(compacetico)), rep("ET", length(competanol)))))
+tabladecomp.contaminado
+```
+
+#### TABLA DE COMPARACIÓN
+
+```{r}
+df_comparacion <- left_join(tabladecomp.contaminado,tabladecomp.limpia,by="numero")
+colnames(df_comparacion) <- c("Onda", "Contaminado", "Limpio")
+df_comparacion
+
+
+
+```
+
+## ANEXOS:
+
+**GRÁFICO DEL PRETRATAMIENTO CON LAS MUESTRAS CONTAMINADAS:**
+
+### PRIMER PREPROCESADO:
+
+#### CORRECCIÓN DE LA LINEA BASE:
+
+##### Método Rubberband
+
+```{r}
+Correcionbbase<-ir_bc(DATAMUESTRAS1,method = "rubberband") 
+plot(Correcionbbase) + geom_path(aes(color = sample_id )) 
+```
+
+#### Suavizado:
+
+```{r}
+Suavizado<-ir_smooth(Correcionbbase,method = "sg", p = 3, n = 91, m = 0)
+plot(Suavizado)+ geom_path(aes(color = sample_id )) 
+```
+
+#### Normalización:
+
+```{r}
+Normalizado<-ir_normalise(Suavizado)
+plot(Normalizado) + geom_path(aes(color = sample_id )) 
+```
+
+#### 1era Derivada:
+
+```{r}
+PRIMERA<-ir_smooth(Suavizado,method = "sg", p = 3, n = 9, m = 1)
+plot(PRIMERA)+ geom_path(aes(color = sample_id ))
+```
+
+### OTRO PREPROCESADO:
+
+#### CORRECCIÓN DE LA LÍNEA BASE
+
+##### Método Asymmetric Least Squares (als)
+
+```{r}
+contaminado_mx<-as.matrix(to_spectra(sample))
+Correcionbbase2<-baseline(contaminado_mx, method = "als")
+Correcionbbase2 <- Correcionbbase2@corrected
+Correcionbbase2[Correcionbbase2<0]<-0
+cont <- ir::ir_import_csv(MUESTRAS)
+contaminado_ir<-fun_to_ir(Correcionbbase2,cont)
+plot(contaminado_ir) +geom_path(aes(color = sample_id ))
+
+```
+
+#### Normalización:
+
+```{r}
+normalized_spectra <- t(apply(Correcionbbase2, 1, function(row) row / sum(row)))
+normalizado2 <- fun_to_ir(s = normalized_spectra,X = cont)
+plot(normalizado2)+geom_path(aes(color = sample_id ))+
+  labs(x = "Longitud de Onda (cm⁻¹)", y = "Absorbancia") +  # Agrega títulos a los ejes
+  theme(legend.position = "none")
+```
+
+#### Suavizado:
+
+```{r}
+suavizado_ir<-normalizado2%>%ir_smooth(method = "sg", p = 3, n = 91, m = 0)
+plot(suavizado_ir)+geom_path(aes(color = sample_id ))+
+  labs(x = "Longitud de Onda (cm⁻¹)", y = "Absorbancia") +  # Agrega títulos a los ejes
+  theme(legend.position = "none")
+suavizado_ir.matriz<-fun_to_spectra(suavizado_ir)
+
+```
+
+#### 2da Derivada:
+
+```{r}
+SEGUNDA <-  as.data.frame(t(apply(suavizado_ir.matriz,1,function(x) sgolayfilt(x, p = 2, n = 7, m = 2))))
+colnames(SEGUNDA) <- colnames(suavizado_ir.matriz)
+segderivada<-fun_to_ir(SEGUNDA,cont)
+plot(segderivada)+geom_path(aes(color = sample_id ))+
+  labs(x = "Longitud de Onda (cm⁻¹)", y = "Absorbancia") +  # Agrega títulos a los ejes
+  theme(legend.position = "none")
+```
+
+#### Escalada:
+```{r}
+SEGUNDA.MX<-as.matrix(SEGUNDA)
+SEGUNDA_ESCALADA <- as.data.frame(scale(SEGUNDA.MX))
+segderivada_escalada <- fun_to_ir(SEGUNDA_ESCALADA, cont)
+plot(segderivada_escalada) + 
+  geom_path(aes(color = sample_id)) +
+  labs(x = "Longitud de Onda (cm⁻¹)", y = "Absorbancia Normalizada") +
+  theme(legend.position = "none")
+```
+
